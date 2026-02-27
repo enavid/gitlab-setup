@@ -1,0 +1,76 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: gitlab
+    restart: always
+    hostname: "${GITLAB_DOMAIN}"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url "https://${GITLAB_DOMAIN}"
+
+        # --- SSL (your own certificate files) ---
+        nginx['ssl_certificate']     = "/etc/gitlab/ssl/fullchain.pem"
+        nginx['ssl_certificate_key'] = "/etc/gitlab/ssl/privkey.pem"
+        letsencrypt['enable']        = false
+        nginx['redirect_http_to_https'] = true
+
+        # --- Container Registry ---
+        registry_external_url "https://${GITLAB_DOMAIN}:5050"
+        registry_nginx['ssl_certificate']     = "/etc/gitlab/ssl/fullchain.pem"
+        registry_nginx['ssl_certificate_key'] = "/etc/gitlab/ssl/privkey.pem"
+
+        # --- Email (update values in .env) ---
+        gitlab_rails['smtp_enable']               = true
+        gitlab_rails['smtp_address']              = "${SMTP_ADDRESS}"
+        gitlab_rails['smtp_port']                 = ${SMTP_PORT}
+        gitlab_rails['smtp_user_name']            = "${SMTP_USER}"
+        gitlab_rails['smtp_password']             = "${SMTP_PASSWORD}"
+        gitlab_rails['smtp_domain']               = "${SMTP_DOMAIN}"
+        gitlab_rails['smtp_authentication']       = "login"
+        gitlab_rails['smtp_enable_starttls_auto'] = true
+        gitlab_rails['gitlab_email_from']         = "${GITLAB_EMAIL_FROM}"
+
+        # --- Security: disable public sign-up ---
+        gitlab_rails['gitlab_signup_enabled'] = false
+
+        # --- Auto backup (keep for 7 days) ---
+        gitlab_rails['backup_keep_time'] = 604800
+
+        # --- Performance tuning ---
+        puma['worker_processes']   = 2
+        sidekiq['concurrency']     = 10
+        postgresql['shared_buffers'] = "256MB"
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "22:22" # SSH for git clone
+      - "5050:5050" # Docker Registry
+
+    volumes:
+      - ./gitlab/config:/etc/gitlab
+      - ./gitlab/logs:/var/log/gitlab
+      - ./gitlab/data:/var/opt/gitlab
+      - ./ssl/fullchain.pem:/etc/gitlab/ssl/fullchain.pem:ro
+      - ./ssl/privkey.pem:/etc/gitlab/ssl/privkey.pem:ro
+
+    shm_size: "256m"
+    networks:
+      - gitlab-net
+
+  # ─────────────────────────────────────────
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: gitlab-runner
+    restart: always
+    depends_on:
+      - gitlab
+    volumes:
+      - ./runner/config:/etc/gitlab-runner
+      - /var/run/docker.sock:/var/run/docker.sock # allows running docker inside CI jobs
+    networks:
+      - gitlab-net
+
+networks:
+  gitlab-net:
+    driver: bridge
